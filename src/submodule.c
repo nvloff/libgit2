@@ -213,6 +213,9 @@ int git_submodule_add_setup(
 
 	assert(repo && url && path);
 
+	if ((error = git_repository__ensure_not_bare(repo, "setup submodule add")) < 0)
+		 return error;
+
 	/* see if there is already an entry for this submodule */
 
 	if (git_submodule_lookup(&sm, repo, path) < 0)

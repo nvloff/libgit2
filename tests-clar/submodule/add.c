@@ -24,6 +24,13 @@ void test_submodule_add__existing(void)
 		git_submodule_add_setup(NULL, g_repo, "whatever", "sm_unchanged", 1));
 }
 
+void test_submodule_add__bare(void)
+{
+	g_repo = cl_git_sandbox_init("testrepo.git");
+	cl_assert_equal_i(GIT_EBAREREPO,
+		git_submodule_add_setup(NULL, g_repo, "http://url", "path", 1));
+}
+
 static void assert_submodule_url(const char* name, const char *url)
 {
 	git_config *cfg;
