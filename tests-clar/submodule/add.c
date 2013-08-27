@@ -8,6 +8,7 @@ static git_repository *g_repo = NULL;
 #define SM_LIBGIT2_URL "https://github.com/libgit2/libgit2.git"
 #define SM_LIBGIT2     "sm_libgit2"
 #define SM_LIBGIT2B    "sm_libgit2b"
+#define SM_LIBGIT2C    "sm_libgit2c"
 
 void test_submodule_add__cleanup(void)
 {
@@ -77,4 +78,59 @@ void test_submodule_add__add(void)
 	cl_assert(!git_path_exists("testrepo/.git/modules/" SM_LIBGIT2B));
 
 	assert_submodule_url(SM_LIBGIT2B, SM_LIBGIT2_URL);
+}
+
+void test_submodule_add__relative_url(void)
+{
+	git_submodule *sm;
+	git_remote *remote;
+
+	g_repo = cl_git_sandbox_init("testrepo2");
+
+	/* make sure we're not defaulting to origin - rename origin -> test_remote */
+	cl_git_pass(git_remote_load(&remote, g_repo, "origin"));
+	cl_git_pass(git_remote_rename(remote, "test_remote", NULL, NULL));
+	cl_git_fail(git_remote_load(&remote, g_repo, "origin"));
+	git_remote_free(remote);
+
+	cl_git_pass(
+		git_submodule_add_setup(&sm, g_repo, "../", SM_LIBGIT2, 0)
+		);
+
+	assert_submodule_url(SM_LIBGIT2, "https://github.com/libgit2/");
+}
+
+void test_submodule_add__relative_url_defaults(void)
+{
+	git_submodule *sm;
+	git_config *config;
+
+	g_repo = cl_git_sandbox_init("testrepo2");
+
+	/* detach head, remote defaults to origin */
+	cl_git_pass(git_repository_detach_head(g_repo));
+
+	cl_git_pass(
+		git_submodule_add_setup(&sm, g_repo, "../", SM_LIBGIT2, 0)
+		);
+
+	assert_submodule_url(SM_LIBGIT2, "https://github.com/libgit2/");
+
+	/* missing origin url, defaults to repo workdir */
+	cl_git_pass(git_repository_config(&config, g_repo));
+	cl_git_pass(git_config_delete_entry(config, "remote.origin.url"));
+
+	cl_git_pass(
+		git_submodule_add_setup(&sm, g_repo, "./", SM_LIBGIT2B, 0)
+		);
+
+	assert_submodule_url(SM_LIBGIT2B, git_repository_workdir(g_repo));
+
+	/* fails with empty origin url */
+	cl_git_pass(git_config_set_string(config, "remote.origin.url", ""));
+	cl_git_fail(
+		git_submodule_add_setup(&sm, g_repo, "./", SM_LIBGIT2C, 0)
+		);
+
+	git_config_free(config);
 }

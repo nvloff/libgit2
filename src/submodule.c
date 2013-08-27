@@ -22,6 +22,8 @@
 #include "iterator.h"
 #include "path.h"
 #include "index.h"
+#include "branch.h"
+#include "remote.h"
 
 #define GIT_MODULES_FILE ".gitmodules"
 
@@ -73,7 +75,7 @@ __KHASH_IMPL(
 
 static int load_submodule_config(git_repository *repo);
 static git_config_backend *open_gitmodules(git_repository *, bool, const git_oid *);
-static int lookup_head_remote(git_buf *url, git_repository *repo);
+static int resolve_remote_url(git_buf *url, git_repository *repo);
 static int submodule_get(git_submodule **, git_repository *, const char *, const char *);
 static int submodule_load_from_config(const git_config_entry *, void *);
 static int submodule_load_from_wd_lite(git_submodule *, const char *, void *);
@@ -229,8 +231,15 @@ int git_submodule_add_setup(
 	/* resolve parameters */
 
 	if (url[0] == '.' && (url[1] == '/' || (url[1] == '.' && url[2] == '/'))) {
-		if (!(error = lookup_head_remote(&real_url, repo)))
+		if (!(error = resolve_remote_url(&real_url, repo)))
 			error = git_path_apply_relative(&real_url, url);
+
+		if (!error && (real_url.size == 0)) {
+			giterr_set(GITERR_SUBMODULE,
+				"Cannot resolve submodule relative url");
+			error = -1;
+			goto cleanup;
+		}
 	} else if (strchr(url, ':') != NULL || url[0] == '/') {
 		error = git_buf_sets(&real_url, url);
 	} else {
@@ -1395,68 +1404,49 @@ cleanup:
 	return error;
 }
 
-static int lookup_head_remote(git_buf *url, git_repository *repo)
+static int get_default_remote_name(git_buf *remote_name, git_repository * repo)
+{
+	if ((git_branch_current__remote_name(remote_name, repo) < 0)) {
+		giterr_clear();
+		return git_buf_sets(remote_name, GIT_REMOTE_ORIGIN);
+	}
+
+	return 0;
+}
+
+static int resolve_remote_url(git_buf *url, git_repository *repo)
 {
 	int error;
 	git_config *cfg;
-	git_reference *head = NULL, *remote = NULL;
-	const char *tgt, *scan;
 	git_buf key = GIT_BUF_INIT;
-
-	/* 1. resolve HEAD -> refs/heads/BRANCH
-	 * 2. lookup config branch.BRANCH.remote -> ORIGIN
-	 * 3. lookup remote.ORIGIN.url
-	 */
+	git_buf remote_name = GIT_BUF_INIT;
+	const char *remote_url;
 
 	if ((error = git_repository_config__weakptr(&cfg, repo)) < 0)
 		return error;
 
-	if (git_reference_lookup(&head, repo, GIT_HEAD_FILE) < 0) {
-		giterr_set(GITERR_SUBMODULE,
-			"Cannot resolve relative URL when HEAD cannot be resolved");
-		error = GIT_ENOTFOUND;
+	/* no remote for current head, use origin */
+	if ((error = get_default_remote_name(&remote_name, repo) < 0))
 		goto cleanup;
+
+	if ((error = git_buf_printf(
+		&key, "remote.%s.url", git_buf_cstr(&remote_name))) < 0)
+		goto cleanup;
+
+	/* remote doesn't have url, use workdir */
+	if ((error = git_config_get_string(&remote_url, cfg, git_buf_cstr(&key))) < 0) {
+		if (error != GIT_ENOTFOUND)
+			goto cleanup;
+
+		giterr_clear();
+		remote_url = git_repository_workdir(repo);
 	}
 
-	if (git_reference_type(head) != GIT_REF_SYMBOLIC) {
-		giterr_set(GITERR_SUBMODULE,
-			"Cannot resolve relative URL when HEAD is not symbolic");
-		error = GIT_ENOTFOUND;
-		goto cleanup;
-	}
-
-	if ((error = git_branch_upstream(&remote, head)) < 0)
-		goto cleanup;
-
-	/* remote should refer to something like refs/remotes/ORIGIN/BRANCH */
-
-	if (git_reference_type(remote) != GIT_REF_SYMBOLIC ||
-		git__prefixcmp(git_reference_symbolic_target(remote), GIT_REFS_REMOTES_DIR) != 0)
-	{
-		giterr_set(GITERR_SUBMODULE,
-			"Cannot resolve relative URL when HEAD is not symbolic");
-		error = GIT_ENOTFOUND;
-		goto cleanup;
-	}
-
-	scan = tgt = git_reference_symbolic_target(remote) + strlen(GIT_REFS_REMOTES_DIR);
-	while (*scan && (*scan != '/' || (scan > tgt && scan[-1] != '\\')))
-		scan++; /* find non-escaped slash to end ORIGIN name */
-
-	error = git_buf_printf(&key, "remote.%.*s.url", (int)(scan - tgt), tgt);
-	if (error < 0)
-		goto cleanup;
-
-	if ((error = git_config_get_string(&tgt, cfg, key.ptr)) < 0)
-		goto cleanup;
-
-	error = git_buf_sets(url, tgt);
+	error = git_buf_sets(url, remote_url);
 
 cleanup:
 	git_buf_free(&key);
-	git_reference_free(head);
-	git_reference_free(remote);
-
+	git_buf_free(&remote_name);
 	return error;
 }
 
