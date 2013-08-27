@@ -599,3 +599,25 @@ int git_branch_is_head(
 
 	return is_same;
 }
+
+int git_branch_current__remote_name(git_buf *remote, git_repository *repo)
+{
+	int error;
+	git_buf tracking_name = GIT_BUF_INIT;
+	git_reference *head = NULL;
+
+	if ((error = git_repository_head(&head, repo)) < 0)
+		return error;
+
+	if ((error = git_branch_upstream__name(&tracking_name,
+		repo, git_reference_name(head))) < 0)
+			goto cleanup;
+
+	error = remote_name(remote, repo,
+			git_buf_cstr(&tracking_name));
+
+cleanup:
+	git_buf_free(&tracking_name);
+	git_reference_free(head);
+	return error;
+}

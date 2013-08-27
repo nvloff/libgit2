@@ -14,4 +14,8 @@ int git_branch_upstream__name(
 	git_repository *repo,
 	const char *canonical_branch_name);
 
+int git_branch_current__remote_name(
+	git_buf *remote,
+	git_repository *repo);
+
 #endif
